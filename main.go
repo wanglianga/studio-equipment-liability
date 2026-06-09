@@ -33,6 +33,7 @@ func main() {
 	fmt.Println("  GET    /api/damage              - List damage reports")
 	fmt.Println("  GET    /api/damage/{id}         - Get damage report")
 	fmt.Println("  POST   /api/repair-quote        - Create repair quote")
+	fmt.Println("  POST   /api/repair-complete/{id} - Complete repair")
 	fmt.Println("  POST   /api/deduction           - Deduct deposit")
 	fmt.Println("  POST   /api/appeal              - Create appeal")
 	fmt.Println("  POST   /api/appeal/review       - Review appeal")

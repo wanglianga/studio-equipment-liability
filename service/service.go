@@ -152,7 +152,12 @@ func (svc *Service) RegisterDamage(input RegisterDamageInput) (*model.DamageRepo
 
 	eq, ok := svc.store.GetEquipment(record.EquipmentID)
 	if ok {
-		eq.Status = model.StatusDamaged
+		switch respType {
+		case model.NormalWear, model.Undetermined, model.PreviousRemnant:
+			eq.Status = model.StatusAvailable
+		default:
+			eq.Status = model.StatusDamaged
+		}
 		eq.UpdatedAt = time.Now()
 		svc.store.SaveEquipment(eq)
 	}
@@ -424,6 +429,21 @@ func (svc *Service) GetDamageReport(id string) (*model.DamageReport, error) {
 		return nil, fmt.Errorf("damage report %s not found", id)
 	}
 	return r, nil
+}
+
+func (svc *Service) CompleteRepair(equipmentID string) (*model.Equipment, error) {
+	eq, ok := svc.store.GetEquipment(equipmentID)
+	if !ok {
+		return nil, fmt.Errorf("equipment %s not found", equipmentID)
+	}
+	if eq.Status != model.StatusRepairing {
+		return nil, fmt.Errorf("equipment %s is not under repair, current status: %s", equipmentID, eq.Status)
+	}
+
+	eq.Status = model.StatusAvailable
+	eq.UpdatedAt = time.Now()
+	svc.store.SaveEquipment(eq)
+	return eq, nil
 }
 
 func (svc *Service) GetBorrowRecord(id string) (*model.BorrowRecord, error) {

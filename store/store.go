@@ -254,7 +254,7 @@ func (s *Store) HasPreviousDamage(equipID string, beforeTime time.Time) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, r := range s.damageReports {
-		if r.EquipmentID == equipID && r.CreatedAt.Before(beforeTime) {
+		if r.EquipmentID == equipID && !r.CreatedAt.After(beforeTime) {
 			return true
 		}
 	}
@@ -265,7 +265,7 @@ func (s *Store) HasPreviousUndetermined(equipID string, beforeTime time.Time) bo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, r := range s.damageReports {
-		if r.EquipmentID == equipID && r.CreatedAt.Before(beforeTime) && r.Responsibility == model.Undetermined {
+		if r.EquipmentID == equipID && !r.CreatedAt.After(beforeTime) && r.Responsibility == model.Undetermined {
 			return true
 		}
 	}

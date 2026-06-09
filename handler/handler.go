@@ -266,6 +266,21 @@ func (h *Handler) GetDamageReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+func (h *Handler) CompleteRepair(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "equipment id is required")
+		return
+	}
+
+	eq, err := h.svc.CompleteRepair(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, eq)
+}
+
 func (h *Handler) ListAppeals(w http.ResponseWriter, r *http.Request) {
 	appeals := h.svc.ListAppeals()
 	writeJSON(w, http.StatusOK, appeals)
@@ -283,6 +298,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/damage", h.ListDamageReports)
 	mux.HandleFunc("GET /api/damage/{id}", h.GetDamageReport)
 	mux.HandleFunc("POST /api/repair-quote", h.CreateRepairQuote)
+	mux.HandleFunc("POST /api/repair-complete/{id}", h.CompleteRepair)
 	mux.HandleFunc("POST /api/deduction", h.DeductDeposit)
 	mux.HandleFunc("POST /api/appeal", h.CreateAppeal)
 	mux.HandleFunc("POST /api/appeal/review", h.ReviewAppeal)
