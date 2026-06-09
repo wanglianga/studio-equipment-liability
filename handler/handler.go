@@ -286,6 +286,62 @@ func (h *Handler) ListAppeals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, appeals)
 }
 
+func (h *Handler) AddAccessoryPrice(w http.ResponseWriter, r *http.Request) {
+	var input service.AddAccessoryPriceInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if input.EquipmentID == "" {
+		writeError(w, http.StatusBadRequest, "equipment_id is required")
+		return
+	}
+	if input.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if input.Price <= 0 {
+		writeError(w, http.StatusBadRequest, "price must be positive")
+		return
+	}
+
+	ap, err := h.svc.AddAccessoryPrice(input)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ap)
+}
+
+func (h *Handler) ListAccessoryPrices(w http.ResponseWriter, r *http.Request) {
+	equipID := r.URL.Query().Get("equipment_id")
+	prices := h.svc.ListAccessoryPrices(equipID)
+	writeJSON(w, http.StatusOK, prices)
+}
+
+func (h *Handler) DeductAccessory(w http.ResponseWriter, r *http.Request) {
+	var input service.DeductAccessoryInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if input.BorrowRecordID == "" {
+		writeError(w, http.StatusBadRequest, "borrow_record_id is required")
+		return
+	}
+	if len(input.AccessoryNames) == 0 {
+		writeError(w, http.StatusBadRequest, "accessory_names must not be empty")
+		return
+	}
+
+	deduction, err := h.svc.DeductAccessory(input)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, deduction)
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/equipments", h.CreateEquipment)
 	mux.HandleFunc("GET /api/equipments", h.ListEquipments)
@@ -300,9 +356,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/repair-quote", h.CreateRepairQuote)
 	mux.HandleFunc("POST /api/repair-complete/{id}", h.CompleteRepair)
 	mux.HandleFunc("POST /api/deduction", h.DeductDeposit)
+	mux.HandleFunc("POST /api/deduction/accessory", h.DeductAccessory)
 	mux.HandleFunc("POST /api/appeal", h.CreateAppeal)
 	mux.HandleFunc("POST /api/appeal/review", h.ReviewAppeal)
 	mux.HandleFunc("GET /api/appeal", h.ListAppeals)
+	mux.HandleFunc("POST /api/accessory-prices", h.AddAccessoryPrice)
+	mux.HandleFunc("GET /api/accessory-prices", h.ListAccessoryPrices)
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {

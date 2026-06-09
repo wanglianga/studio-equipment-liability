@@ -362,3 +362,262 @@ func TestCompleteRepairOnlyFromRepairing(t *testing.T) {
 		t.Fatal("should not be able to complete repair on available equipment")
 	}
 }
+
+func TestPreConditionItemsMatchFaultPoints(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Canon",
+		Model:          "R5",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:   eq.ID,
+		CustomerName:  "Alice",
+		CustomerPhone: "111",
+		StudioPosition: "G-1",
+		Deposit:       5000,
+		PreBorrowPhotos: []string{"before.jpg"},
+		PreConditionItems: []model.PreConditionItem{
+			{Location: "body top", Description: "scratch near hot shoe", Severity: "minor", Photo: "pre_scratch1.jpg"},
+			{Location: "lens mount", Description: "slight looseness", Severity: "minor", Photo: "pre_loose1.jpg"},
+		},
+		PreConditionNote: "器材出借前已有热靴附近划痕和卡口轻微松动",
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints: []model.FaultPoint{
+			{Location: "body top", Description: "scratch near hot shoe", Severity: "minor"},
+			{Location: "lens mount", Description: "slight looseness", Severity: "minor"},
+		},
+		ReturnPhotos: []string{"damage.jpg"},
+	})
+
+	if dm.Responsibility != model.PreviousRemnant {
+		t.Fatalf("expected previous_remnant when all faults match pre-condition items, got %s (note: %s)", dm.Responsibility, dm.ResponsibilityNote)
+	}
+
+	eqAfter, _ := svc.GetEquipment(eq.ID)
+	if eqAfter.Status != model.StatusAvailable {
+		t.Fatalf("after previous_remnant, equipment should be available, got %s", eqAfter.Status)
+	}
+}
+
+func TestPreConditionItemsPartialMatch(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Canon",
+		Model:          "R5",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:   eq.ID,
+		CustomerName:  "Bob",
+		CustomerPhone: "222",
+		StudioPosition: "G-2",
+		Deposit:       5000,
+		PreBorrowPhotos: []string{"before.jpg"},
+		PreConditionItems: []model.PreConditionItem{
+			{Location: "body top", Description: "scratch near hot shoe", Severity: "minor", Photo: "pre_scratch1.jpg"},
+		},
+		PreConditionNote: "器材出借前已有热靴附近划痕",
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints: []model.FaultPoint{
+			{Location: "body top", Description: "scratch near hot shoe", Severity: "minor"},
+			{Location: "screen", Description: "cracked LCD", Severity: "severe"},
+		},
+		ReturnPhotos: []string{"damage.jpg"},
+	})
+
+	if dm.Responsibility != model.PreviousRemnant {
+		t.Fatalf("expected previous_remnant when partial faults match pre-condition items with preConditionMatchCount>0, got %s (note: %s)", dm.Responsibility, dm.ResponsibilityNote)
+	}
+}
+
+func TestPreConditionItemsNoMatch(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Canon",
+		Model:          "R5",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:   eq.ID,
+		CustomerName:  "Charlie",
+		CustomerPhone: "333",
+		StudioPosition: "G-3",
+		Deposit:       5000,
+		PreBorrowPhotos: []string{"before.jpg"},
+		PreConditionItems: []model.PreConditionItem{
+			{Location: "body top", Description: "scratch near hot shoe", Severity: "minor", Photo: "pre_scratch1.jpg"},
+		},
+		PreConditionNote: "器材出借前已有热靴附近划痕",
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints: []model.FaultPoint{
+			{Location: "screen", Description: "cracked LCD", Severity: "severe"},
+		},
+		ReturnPhotos: []string{"damage.jpg"},
+	})
+
+	if dm.Responsibility != model.CustomerDamage {
+		t.Fatalf("expected customer_damage when faults don't match pre-condition items, got %s (note: %s)", dm.Responsibility, dm.ResponsibilityNote)
+	}
+}
+
+func TestDeductAccessorySeparate(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Sony",
+		Model:          "A7IV",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	svc.AddAccessoryPrice(AddAccessoryPriceInput{
+		EquipmentID: eq.ID,
+		Name:        "lens_cap",
+		Price:       50,
+	})
+	svc.AddAccessoryPrice(AddAccessoryPriceInput{
+		EquipmentID: eq.ID,
+		Name:        "battery",
+		Price:       300,
+	})
+	svc.AddAccessoryPrice(AddAccessoryPriceInput{
+		EquipmentID: eq.ID,
+		Name:        "softbox",
+		Price:       150,
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:   eq.ID,
+		CustomerName:  "Dave",
+		CustomerPhone: "444",
+		StudioPosition: "H-1",
+		Deposit:       1000,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	deduction, err := svc.DeductAccessory(DeductAccessoryInput{
+		BorrowRecordID: br.ID,
+		AccessoryNames: []string{"lens_cap", "battery"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if deduction.DeductAmount != 350 {
+		t.Fatalf("expected deduct_amount 350 (50+300), got %.2f", deduction.DeductAmount)
+	}
+	if deduction.RefundAmount != 650 {
+		t.Fatalf("expected refund_amount 650 (1000-350), got %.2f", deduction.RefundAmount)
+	}
+	if len(deduction.AccessoryItems) != 2 {
+		t.Fatalf("expected 2 accessory items, got %d", len(deduction.AccessoryItems))
+	}
+	if deduction.RepairQuoteID != "" {
+		t.Fatalf("expected empty repair_quote_id for accessory deduction, got %s", deduction.RepairQuoteID)
+	}
+
+	found := false
+	for _, item := range deduction.AccessoryItems {
+		if item.AccessoryName == "lens_cap" && item.Price == 50 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected lens_cap accessory item with price 50")
+	}
+}
+
+func TestDeductAccessoryExceedsDeposit(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Sony",
+		Model:          "A7IV",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	svc.AddAccessoryPrice(AddAccessoryPriceInput{
+		EquipmentID: eq.ID,
+		Name:        "battery",
+		Price:       800,
+	})
+	svc.AddAccessoryPrice(AddAccessoryPriceInput{
+		EquipmentID: eq.ID,
+		Name:        "carrying_bag",
+		Price:       500,
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:   eq.ID,
+		CustomerName:  "Eve",
+		CustomerPhone: "555",
+		StudioPosition: "H-2",
+		Deposit:       1000,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	deduction, err := svc.DeductAccessory(DeductAccessoryInput{
+		BorrowRecordID: br.ID,
+		AccessoryNames: []string{"battery", "carrying_bag"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if deduction.DeductAmount != 1000 {
+		t.Fatalf("expected deduct_amount 1000 (capped at deposit), got %.2f", deduction.DeductAmount)
+	}
+	if deduction.RefundAmount != 0 {
+		t.Fatalf("expected refund_amount 0, got %.2f", deduction.RefundAmount)
+	}
+}

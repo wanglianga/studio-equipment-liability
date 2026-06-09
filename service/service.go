@@ -56,12 +56,14 @@ func (svc *Service) ListEquipments() []*model.Equipment {
 }
 
 type BorrowInput struct {
-	EquipmentID     string   `json:"equipment_id"`
-	CustomerName    string   `json:"customer_name"`
-	CustomerPhone   string   `json:"customer_phone"`
-	StudioPosition  string   `json:"studio_position"`
-	Deposit         float64  `json:"deposit"`
-	PreBorrowPhotos []string `json:"pre_borrow_photos"`
+	EquipmentID      string                `json:"equipment_id"`
+	CustomerName     string                `json:"customer_name"`
+	CustomerPhone    string                `json:"customer_phone"`
+	StudioPosition   string                `json:"studio_position"`
+	Deposit          float64               `json:"deposit"`
+	PreBorrowPhotos  []string              `json:"pre_borrow_photos"`
+	PreConditionItems []model.PreConditionItem `json:"pre_condition_items"`
+	PreConditionNote string                `json:"pre_condition_note"`
 }
 
 func (svc *Service) BorrowEquipment(input BorrowInput) (*model.BorrowRecord, error) {
@@ -75,16 +77,18 @@ func (svc *Service) BorrowEquipment(input BorrowInput) (*model.BorrowRecord, err
 
 	now := time.Now()
 	record := &model.BorrowRecord{
-		ID:              svc.store.NextBorrowID(),
-		EquipmentID:     input.EquipmentID,
-		CustomerName:    input.CustomerName,
-		CustomerPhone:   input.CustomerPhone,
-		StudioPosition:  input.StudioPosition,
-		Deposit:         input.Deposit,
-		PreBorrowPhotos: input.PreBorrowPhotos,
-		BorrowTime:      now,
-		Status:          model.BorrowActive,
-		CreatedAt:       now,
+		ID:                svc.store.NextBorrowID(),
+		EquipmentID:       input.EquipmentID,
+		CustomerName:      input.CustomerName,
+		CustomerPhone:     input.CustomerPhone,
+		StudioPosition:    input.StudioPosition,
+		Deposit:           input.Deposit,
+		PreBorrowPhotos:   input.PreBorrowPhotos,
+		PreConditionItems: input.PreConditionItems,
+		PreConditionNote:  input.PreConditionNote,
+		BorrowTime:        now,
+		Status:            model.BorrowActive,
+		CreatedAt:         now,
 	}
 
 	eq.Status = model.StatusBorrowed
@@ -193,7 +197,31 @@ func (svc *Service) determineResponsibility(record *model.BorrowRecord, faults [
 		return model.PreviousRemnant, "该器材在此前借出期间已有未判定损坏记录，判定为前序遗留"
 	}
 
-	if hasPhysicalDamage && len(record.PreBorrowPhotos) == 0 {
+	preConditionMatchCount := 0
+	nonPreConditionFaults := make([]model.FaultPoint, 0)
+	for _, fp := range faults {
+		if fp.Severity == "missing" {
+			nonPreConditionFaults = append(nonPreConditionFaults, fp)
+			continue
+		}
+		matched := false
+		for _, pc := range record.PreConditionItems {
+			if fp.Location == pc.Location && (fp.Severity == pc.Severity || fp.Severity == "minor") {
+				matched = true
+				preConditionMatchCount++
+				break
+			}
+		}
+		if !matched {
+			nonPreConditionFaults = append(nonPreConditionFaults, fp)
+		}
+	}
+
+	if preConditionMatchCount > 0 && len(nonPreConditionFaults) == 0 {
+		return model.PreviousRemnant, fmt.Sprintf("所有故障点均与借前已记录状态一致（%d处匹配），判定为前序遗留", preConditionMatchCount)
+	}
+
+	if hasPhysicalDamage && len(record.PreBorrowPhotos) == 0 && preConditionMatchCount == 0 {
 		return model.Undetermined, "缺乏借前照片作为对比依据，无法确定损坏发生时间，判定为无法判定"
 	}
 
@@ -202,6 +230,9 @@ func (svc *Service) determineResponsibility(record *model.BorrowRecord, faults [
 	}
 
 	if hasPhysicalDamage {
+		if preConditionMatchCount > 0 {
+			return model.PreviousRemnant, fmt.Sprintf("部分损坏与借前状态一致（%d处匹配），判定为前序遗留", preConditionMatchCount)
+		}
 		eq, ok := svc.store.GetEquipment(record.EquipmentID)
 		if ok && (eq.Category == model.CategoryFlash || eq.Category == model.CategoryBackground) && record.StudioPosition != "" {
 			return model.TransportImpact, "灯具或背景架在棚位间移动中可能出现碰撞，判定为运输碰撞"
@@ -452,4 +483,114 @@ func (svc *Service) GetBorrowRecord(id string) (*model.BorrowRecord, error) {
 		return nil, fmt.Errorf("borrow record %s not found", id)
 	}
 	return r, nil
+}
+
+type AddAccessoryPriceInput struct {
+	EquipmentID string  `json:"equipment_id"`
+	Name        string  `json:"name"`
+	Price       float64 `json:"price"`
+}
+
+func (svc *Service) AddAccessoryPrice(input AddAccessoryPriceInput) (*model.AccessoryPrice, error) {
+	_, ok := svc.store.GetEquipment(input.EquipmentID)
+	if !ok {
+		return nil, fmt.Errorf("equipment %s not found", input.EquipmentID)
+	}
+	if input.Name == "" {
+		return nil, fmt.Errorf("accessory name is required")
+	}
+	if input.Price <= 0 {
+		return nil, fmt.Errorf("accessory price must be positive")
+	}
+
+	existing := svc.store.FindAccessoryPriceByEquipAndName(input.EquipmentID, input.Name)
+	if existing != nil {
+		existing.Price = input.Price
+		svc.store.SaveAccessoryPrice(existing)
+		return existing, nil
+	}
+
+	ap := &model.AccessoryPrice{
+		ID:          svc.store.NextAccessoryID(),
+		EquipmentID: input.EquipmentID,
+		Name:        input.Name,
+		Price:       input.Price,
+	}
+	svc.store.SaveAccessoryPrice(ap)
+	return ap, nil
+}
+
+func (svc *Service) ListAccessoryPrices(equipmentID string) []*model.AccessoryPrice {
+	if equipmentID != "" {
+		return svc.store.ListAccessoryPricesByEquipment(equipmentID)
+	}
+	return svc.store.ListAccessoryPrices()
+}
+
+type DeductAccessoryInput struct {
+	BorrowRecordID string   `json:"borrow_record_id"`
+	AccessoryNames []string `json:"accessory_names"`
+	Note           string   `json:"note,omitempty"`
+}
+
+func (svc *Service) DeductAccessory(input DeductAccessoryInput) (*model.DeductionRecord, error) {
+	record, ok := svc.store.GetBorrowRecord(input.BorrowRecordID)
+	if !ok {
+		return nil, fmt.Errorf("borrow record %s not found", input.BorrowRecordID)
+	}
+
+	if len(input.AccessoryNames) == 0 {
+		return nil, fmt.Errorf("at least one accessory name is required")
+	}
+
+	accessoryItems := make([]model.AccessoryDeductionItem, 0, len(input.AccessoryNames))
+	var totalDeduct float64
+	var missingNames []string
+
+	for _, name := range input.AccessoryNames {
+		ap := svc.store.FindAccessoryPriceByEquipAndName(record.EquipmentID, name)
+		if ap == nil {
+			missingNames = append(missingNames, name)
+			continue
+		}
+		accessoryItems = append(accessoryItems, model.AccessoryDeductionItem{
+			AccessoryName: name,
+			Price:         ap.Price,
+		})
+		totalDeduct += ap.Price
+	}
+
+	if len(missingNames) > 0 && len(accessoryItems) == 0 {
+		return nil, fmt.Errorf("no accessory prices found for: %v; please add accessory prices first", missingNames)
+	}
+
+	var deductAmount, refundAmount float64
+	if totalDeduct >= record.Deposit {
+		deductAmount = record.Deposit
+		refundAmount = 0
+	} else {
+		deductAmount = totalDeduct
+		refundAmount = record.Deposit - totalDeduct
+	}
+
+	note := fmt.Sprintf("配件缺失扣款：共 %d 项配件，合计 %.2f", len(accessoryItems), totalDeduct)
+	if len(missingNames) > 0 {
+		note += fmt.Sprintf("；以下配件未找到价目：%v", missingNames)
+	}
+	if input.Note != "" {
+		note = input.Note + "；" + note
+	}
+
+	deduction := &model.DeductionRecord{
+		ID:             svc.store.NextDeductionID(),
+		BorrowRecordID: input.BorrowRecordID,
+		DeductAmount:   deductAmount,
+		RefundAmount:   refundAmount,
+		AccessoryItems: accessoryItems,
+		Note:           note,
+		CreatedAt:      time.Now(),
+	}
+
+	svc.store.SaveDeductionRecord(deduction)
+	return deduction, nil
 }

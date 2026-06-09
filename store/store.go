@@ -16,12 +16,14 @@ type Store struct {
 	repairQuotes     map[string]*model.RepairQuote
 	deductionRecords map[string]*model.DeductionRecord
 	appeals          map[string]*model.Appeal
+	accessoryPrices  map[string]*model.AccessoryPrice
 	equipCounter     int
 	borrowCounter    int
 	damageCounter    int
 	repairCounter    int
 	deductCounter    int
 	appealCounter    int
+	accessoryCounter int
 }
 
 func New() *Store {
@@ -32,6 +34,7 @@ func New() *Store {
 		repairQuotes:     make(map[string]*model.RepairQuote),
 		deductionRecords: make(map[string]*model.DeductionRecord),
 		appeals:          make(map[string]*model.Appeal),
+		accessoryPrices:  make(map[string]*model.AccessoryPrice),
 	}
 }
 
@@ -282,4 +285,57 @@ func (s *Store) CountBorrowByEquipment(equipID string) int {
 		}
 	}
 	return count
+}
+
+func (s *Store) SaveAccessoryPrice(ap *model.AccessoryPrice) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.accessoryPrices[ap.ID] = ap
+}
+
+func (s *Store) GetAccessoryPrice(id string) (*model.AccessoryPrice, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ap, ok := s.accessoryPrices[id]
+	return ap, ok
+}
+
+func (s *Store) FindAccessoryPriceByEquipAndName(equipID, name string) *model.AccessoryPrice {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ap := range s.accessoryPrices {
+		if ap.EquipmentID == equipID && ap.Name == name {
+			return ap
+		}
+	}
+	return nil
+}
+
+func (s *Store) ListAccessoryPricesByEquipment(equipID string) []*model.AccessoryPrice {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.AccessoryPrice, 0)
+	for _, ap := range s.accessoryPrices {
+		if ap.EquipmentID == equipID {
+			result = append(result, ap)
+		}
+	}
+	return result
+}
+
+func (s *Store) ListAccessoryPrices() []*model.AccessoryPrice {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.AccessoryPrice, 0, len(s.accessoryPrices))
+	for _, ap := range s.accessoryPrices {
+		result = append(result, ap)
+	}
+	return result
+}
+
+func (s *Store) NextAccessoryID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.accessoryCounter++
+	return fmt.Sprintf("AP-%04d", s.accessoryCounter)
 }

@@ -42,19 +42,28 @@ const (
 	BorrowClosed   BorrowStatus = "closed"
 )
 
+type PreConditionItem struct {
+	Location    string `json:"location"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+	Photo       string `json:"photo,omitempty"`
+}
+
 type BorrowRecord struct {
-	ID              string       `json:"id"`
-	EquipmentID     string       `json:"equipment_id"`
-	CustomerName    string       `json:"customer_name"`
-	CustomerPhone   string       `json:"customer_phone"`
-	StudioPosition  string       `json:"studio_position"`
-	Deposit         float64      `json:"deposit"`
-	PreBorrowPhotos []string     `json:"pre_borrow_photos"`
-	BorrowTime      time.Time    `json:"borrow_time"`
-	ReturnTime      *time.Time   `json:"return_time,omitempty"`
-	ReturnPhotos    []string     `json:"return_photos,omitempty"`
-	Status          BorrowStatus `json:"status"`
-	CreatedAt       time.Time    `json:"created_at"`
+	ID                 string            `json:"id"`
+	EquipmentID        string            `json:"equipment_id"`
+	CustomerName       string            `json:"customer_name"`
+	CustomerPhone      string            `json:"customer_phone"`
+	StudioPosition     string            `json:"studio_position"`
+	Deposit            float64           `json:"deposit"`
+	PreBorrowPhotos    []string          `json:"pre_borrow_photos"`
+	PreConditionItems  []PreConditionItem `json:"pre_condition_items,omitempty"`
+	PreConditionNote   string            `json:"pre_condition_note,omitempty"`
+	BorrowTime         time.Time         `json:"borrow_time"`
+	ReturnTime         *time.Time        `json:"return_time,omitempty"`
+	ReturnPhotos       []string          `json:"return_photos,omitempty"`
+	Status             BorrowStatus      `json:"status"`
+	CreatedAt          time.Time         `json:"created_at"`
 }
 
 type ResponsibilityType string
@@ -95,14 +104,27 @@ type RepairQuote struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type AccessoryPrice struct {
+	ID          string  `json:"id"`
+	EquipmentID string  `json:"equipment_id"`
+	Name        string  `json:"name"`
+	Price       float64 `json:"price"`
+}
+
+type AccessoryDeductionItem struct {
+	AccessoryName string  `json:"accessory_name"`
+	Price         float64 `json:"price"`
+}
+
 type DeductionRecord struct {
-	ID             string    `json:"id"`
-	BorrowRecordID string    `json:"borrow_record_id"`
-	RepairQuoteID  string    `json:"repair_quote_id"`
-	DeductAmount   float64   `json:"deduct_amount"`
-	RefundAmount   float64   `json:"refund_amount"`
-	Note           string    `json:"note"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID               string                  `json:"id"`
+	BorrowRecordID   string                  `json:"borrow_record_id"`
+	RepairQuoteID    string                  `json:"repair_quote_id,omitempty"`
+	DeductAmount     float64                 `json:"deduct_amount"`
+	RefundAmount     float64                 `json:"refund_amount"`
+	AccessoryItems   []AccessoryDeductionItem `json:"accessory_items,omitempty"`
+	Note             string                  `json:"note"`
+	CreatedAt        time.Time               `json:"created_at"`
 }
 
 type AppealStatus string
