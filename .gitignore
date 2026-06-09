@@ -1,0 +1,28 @@
+# Go build outputs
+*.exe
+*.test
+*.out
+bin/
+dist/
+build/
+
+# Dependency and tool caches
+vendor/
+.cache/
+.pytest_cache/
+
+# Logs and local runtime files
+*.log
+*.tmp
+tmp/
+
+# Local environment
+.env
+.env.*
+
+# QA and browser artifacts
+coverage/
+playwright-report/
+test-results/
+screenshots/
+traces/
