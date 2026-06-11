@@ -293,6 +293,13 @@ func (svc *Service) DeductDeposit(input DeductDepositInput) (*model.DeductionRec
 		return nil, fmt.Errorf("borrow record %s not found", input.BorrowRecordID)
 	}
 
+	if record.DepositFrozen {
+		appeal := svc.store.FindAppealByBorrow(input.BorrowRecordID)
+		if appeal != nil && appeal.Status == model.AppealPending {
+			return nil, fmt.Errorf("押金已冻结：客户申诉待审核，暂停押金结算。原因：%s", record.DepositFrozenReason)
+		}
+	}
+
 	quote, ok := svc.store.GetRepairQuote(input.RepairQuoteID)
 	if !ok {
 		return nil, fmt.Errorf("repair quote %s not found", input.RepairQuoteID)
@@ -316,8 +323,8 @@ func (svc *Service) DeductDeposit(input DeductDepositInput) (*model.DeductionRec
 		if quote.TotalCost >= record.Deposit {
 			deductAmount = record.Deposit
 			refundAmount = 0
-			note = "维修费用 %.2f 超出押金 %.2f，全额扣除押金"
-			note = fmt.Sprintf(note, quote.TotalCost, record.Deposit)
+			note = "维修费用 %.2f 超出押金 %.2f，全额扣除押金，需追加赔付 %.2f"
+			note = fmt.Sprintf(note, quote.TotalCost, record.Deposit, quote.TotalCost-record.Deposit)
 		} else {
 			deductAmount = quote.TotalCost
 			refundAmount = record.Deposit - quote.TotalCost
@@ -345,6 +352,18 @@ func (svc *Service) DeductDeposit(input DeductDepositInput) (*model.DeductionRec
 	}
 
 	svc.store.SaveDeductionRecord(deduction)
+
+	if damageReport.Responsibility == model.CustomerDamage ||
+		damageReport.Responsibility == model.AccessoryMissing ||
+		damageReport.Responsibility == model.TransportImpact {
+		if quote.TotalCost > record.Deposit {
+			existing := svc.store.FindAdditionalCompensationByRepairQuote(input.RepairQuoteID)
+			if existing == nil {
+				svc.createAdditionalCompensation(record, quote, deduction)
+			}
+		}
+	}
+
 	return deduction, nil
 }
 
@@ -371,6 +390,7 @@ func (svc *Service) CreateAppeal(input CreateAppealInput) (*model.Appeal, error)
 		return nil, fmt.Errorf("no damage report found for borrow record %s", input.BorrowRecordID)
 	}
 
+	now := time.Now()
 	appeal := &model.Appeal{
 		ID:             svc.store.NextAppealID(),
 		BorrowRecordID: input.BorrowRecordID,
@@ -378,10 +398,13 @@ func (svc *Service) CreateAppeal(input CreateAppealInput) (*model.Appeal, error)
 		Reason:         input.Reason,
 		Evidence:       input.Evidence,
 		Status:         model.AppealPending,
-		CreatedAt:      time.Now(),
+		CreatedAt:      now,
 	}
 
-	record.Status = model.BorrowAppealed
+	record.Status = model.BorrowDepositFrozen
+	record.DepositFrozen = true
+	record.DepositFrozenAt = &now
+	record.DepositFrozenReason = "客户申诉：不同意责任结论(" + string(damageReport.Responsibility) + ")，暂停押金结算"
 	svc.store.SaveBorrowRecord(record)
 	svc.store.SaveAppeal(appeal)
 
@@ -592,5 +615,209 @@ func (svc *Service) DeductAccessory(input DeductAccessoryInput) (*model.Deductio
 	}
 
 	svc.store.SaveDeductionRecord(deduction)
+
+	if totalDeduct > record.Deposit {
+		existing := svc.store.FindAdditionalCompensationByBorrow(input.BorrowRecordID)
+		if len(existing) == 0 {
+			quote := &model.RepairQuote{
+				ID:        "ACC-DEDUCT",
+				TotalCost: totalDeduct,
+			}
+			svc.createAdditionalCompensation(record, quote, deduction)
+		}
+	}
+
 	return deduction, nil
+}
+
+type AddSupplementalEvidenceInput struct {
+	AppealID       string             `json:"appeal_id"`
+	BorrowRecordID string             `json:"borrow_record_id"`
+	OperatorName   string             `json:"operator_name"`
+	EvidenceType   model.EvidenceType `json:"evidence_type"`
+	Description    string             `json:"description"`
+	Attachments    []string           `json:"attachments"`
+}
+
+func (svc *Service) AddSupplementalEvidence(input AddSupplementalEvidenceInput) (*model.SupplementalEvidence, error) {
+	if input.BorrowRecordID == "" {
+		return nil, fmt.Errorf("borrow_record_id is required")
+	}
+	if input.OperatorName == "" {
+		return nil, fmt.Errorf("operator_name is required")
+	}
+	if input.EvidenceType == "" {
+		return nil, fmt.Errorf("evidence_type is required")
+	}
+	if len(input.Attachments) == 0 {
+		return nil, fmt.Errorf("at least one attachment is required")
+	}
+
+	record, ok := svc.store.GetBorrowRecord(input.BorrowRecordID)
+	if !ok {
+		return nil, fmt.Errorf("borrow record %s not found", input.BorrowRecordID)
+	}
+
+	if input.AppealID != "" {
+		appeal, ok := svc.store.GetAppeal(input.AppealID)
+		if !ok {
+			return nil, fmt.Errorf("appeal %s not found", input.AppealID)
+		}
+		if appeal.BorrowRecordID != input.BorrowRecordID {
+			return nil, fmt.Errorf("appeal %s does not belong to borrow record %s", input.AppealID, input.BorrowRecordID)
+		}
+	}
+
+	evidence := &model.SupplementalEvidence{
+		ID:             svc.store.NextSupplementalEvidenceID(),
+		AppealID:       input.AppealID,
+		BorrowRecordID: input.BorrowRecordID,
+		OperatorName:   input.OperatorName,
+		EvidenceType:   input.EvidenceType,
+		Description:    input.Description,
+		Attachments:    input.Attachments,
+		CreatedAt:      time.Now(),
+	}
+
+	svc.store.SaveSupplementalEvidence(evidence)
+	_ = record
+	return evidence, nil
+}
+
+type UpdateRepairQuoteInput struct {
+	RepairQuoteID string  `json:"repair_quote_id"`
+	RepairCost    float64 `json:"repair_cost"`
+	LaborCost     float64 `json:"labor_cost"`
+	Description   string  `json:"description"`
+	UpdateNote    string  `json:"update_note"`
+}
+
+func (svc *Service) UpdateRepairQuote(input UpdateRepairQuoteInput) (*model.RepairQuote, *model.AdditionalCompensation, error) {
+	if input.RepairQuoteID == "" {
+		return nil, nil, fmt.Errorf("repair_quote_id is required")
+	}
+	if input.RepairCost < 0 || input.LaborCost < 0 {
+		return nil, nil, fmt.Errorf("repair_cost and labor_cost must not be negative")
+	}
+
+	quote, ok := svc.store.GetRepairQuote(input.RepairQuoteID)
+	if !ok {
+		return nil, nil, fmt.Errorf("repair quote %s not found", input.RepairQuoteID)
+	}
+
+	now := time.Now()
+	oldTotalCost := quote.TotalCost
+	quote.RepairCost = input.RepairCost
+	quote.LaborCost = input.LaborCost
+	quote.TotalCost = input.RepairCost + input.LaborCost
+	quote.Description = input.Description
+	quote.UpdatedAt = &now
+	quote.IsUpdated = true
+	quote.UpdateNote = input.UpdateNote
+	svc.store.UpdateRepairQuote(quote)
+
+	damageReport, _ := svc.store.GetDamageReport(quote.DamageReportID)
+	var additionalComp *model.AdditionalCompensation
+
+	if damageReport != nil {
+		if damageReport.Responsibility == model.CustomerDamage ||
+			damageReport.Responsibility == model.AccessoryMissing ||
+			damageReport.Responsibility == model.TransportImpact {
+
+			record, _ := svc.store.GetBorrowRecord(damageReport.BorrowRecordID)
+			if record != nil && quote.TotalCost > record.Deposit {
+				existingDeduction := svc.store.FindDeductionByBorrow(record.ID)
+				if existingDeduction != nil {
+					existingComp := svc.store.FindAdditionalCompensationByRepairQuote(input.RepairQuoteID)
+					if existingComp != nil {
+						existingComp.NewTotalCost = quote.TotalCost
+						existingComp.AdditionalAmount = quote.TotalCost - record.Deposit
+						existingComp.Note = fmt.Sprintf("报价更新：原总费用%.2f→新总费用%.2f，追加赔付调整为%.2f",
+							oldTotalCost, quote.TotalCost, existingComp.AdditionalAmount)
+						svc.store.SaveAdditionalCompensation(existingComp)
+						additionalComp = existingComp
+					} else {
+						additionalComp = svc.createAdditionalCompensation(record, quote, existingDeduction)
+					}
+
+					existingDeduction.DeductAmount = record.Deposit
+					existingDeduction.RefundAmount = 0
+					existingDeduction.Note = fmt.Sprintf("维修报价更新(%.2f→%.2f)：维修费用超出押金 %.2f，全额扣除押金，需追加赔付 %.2f",
+						oldTotalCost, quote.TotalCost, record.Deposit, quote.TotalCost-record.Deposit)
+					svc.store.SaveDeductionRecord(existingDeduction)
+				}
+			}
+		}
+	}
+
+	return quote, additionalComp, nil
+}
+
+func (svc *Service) createAdditionalCompensation(
+	record *model.BorrowRecord,
+	quote *model.RepairQuote,
+	deduction *model.DeductionRecord,
+) *model.AdditionalCompensation {
+	additionalAmount := quote.TotalCost - record.Deposit
+	if additionalAmount <= 0 {
+		return nil
+	}
+
+	comp := &model.AdditionalCompensation{
+		ID:               svc.store.NextAdditionalCompensationID(),
+		BorrowRecordID:   record.ID,
+		RepairQuoteID:    quote.ID,
+		OriginalDeduct:   deduction.DeductAmount,
+		OriginalRefund:   deduction.RefundAmount,
+		NewTotalCost:     quote.TotalCost,
+		DepositAmount:    record.Deposit,
+		AdditionalAmount: additionalAmount,
+		Status:           "pending",
+		Note:             fmt.Sprintf("维修总费用%.2f超过押金%.2f，客户需追加赔付%.2f", quote.TotalCost, record.Deposit, additionalAmount),
+		CreatedAt:        time.Now(),
+	}
+	svc.store.SaveAdditionalCompensation(comp)
+	return comp
+}
+
+func (svc *Service) ListSupplementalEvidences(appealID, borrowRecordID string) []*model.SupplementalEvidence {
+	if appealID != "" {
+		return svc.store.FindSupplementalEvidenceByAppeal(appealID)
+	}
+	if borrowRecordID != "" {
+		return svc.store.FindSupplementalEvidenceByBorrow(borrowRecordID)
+	}
+	return svc.store.ListSupplementalEvidences()
+}
+
+func (svc *Service) ListAdditionalCompensations(borrowRecordID string) []*model.AdditionalCompensation {
+	if borrowRecordID != "" {
+		return svc.store.FindAdditionalCompensationByBorrow(borrowRecordID)
+	}
+	return svc.store.ListAdditionalCompensations()
+}
+
+type CollectAdditionalCompensationInput struct {
+	CompensationID string `json:"compensation_id"`
+}
+
+func (svc *Service) CollectAdditionalCompensation(input CollectAdditionalCompensationInput) (*model.AdditionalCompensation, error) {
+	if input.CompensationID == "" {
+		return nil, fmt.Errorf("compensation_id is required")
+	}
+
+	comp, ok := svc.store.GetAdditionalCompensation(input.CompensationID)
+	if !ok {
+		return nil, fmt.Errorf("additional compensation %s not found", input.CompensationID)
+	}
+
+	if comp.Status == "collected" {
+		return nil, fmt.Errorf("additional compensation %s already collected", input.CompensationID)
+	}
+
+	now := time.Now()
+	comp.Status = "collected"
+	comp.CollectedAt = &now
+	svc.store.SaveAdditionalCompensation(comp)
+	return comp, nil
 }

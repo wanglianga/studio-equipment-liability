@@ -621,3 +621,345 @@ func TestDeductAccessoryExceedsDeposit(t *testing.T) {
 		t.Fatalf("expected refund_amount 0, got %.2f", deduction.RefundAmount)
 	}
 }
+
+func TestAppealFreezesDeposit(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryLens,
+		Brand:          "Canon",
+		Model:          "EF 24-70mm",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:     eq.ID,
+		CustomerName:    "Frank",
+		CustomerPhone:   "666",
+		StudioPosition:  "I-1",
+		Deposit:         2000,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints:    []model.FaultPoint{{Location: "glass", Description: "crack", Severity: "severe"}},
+		ReturnPhotos:   []string{"damage.jpg"},
+	})
+
+	if dm.Responsibility != model.CustomerDamage {
+		t.Fatalf("expected customer_damage, got %s", dm.Responsibility)
+	}
+
+	rq, _ := svc.CreateRepairQuote(CreateRepairQuoteInput{
+		DamageReportID: dm.ID,
+		RepairCost:     800,
+		LaborCost:      200,
+		Description:    "repair",
+	})
+
+	appeal, err := svc.CreateAppeal(CreateAppealInput{
+		BorrowRecordID: br.ID,
+		CustomerName:   "Frank",
+		Reason:         "I disagree with the responsibility conclusion",
+		Evidence:       []string{"my_evidence.jpg"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating appeal: %v", err)
+	}
+
+	brAfter, _ := svc.GetBorrowRecord(br.ID)
+	if !brAfter.DepositFrozen {
+		t.Fatal("expected deposit to be frozen after appeal")
+	}
+	if brAfter.Status != model.BorrowDepositFrozen {
+		t.Fatalf("expected borrow status to be deposit_frozen, got %s", brAfter.Status)
+	}
+	if brAfter.DepositFrozenReason == "" {
+		t.Fatal("expected deposit_frozen_reason to be set")
+	}
+	if appeal.Status != model.AppealPending {
+		t.Fatalf("expected appeal status pending, got %s", appeal.Status)
+	}
+
+	_, err = svc.DeductDeposit(DeductDepositInput{
+		BorrowRecordID: br.ID,
+		RepairQuoteID:  rq.ID,
+	})
+	if err == nil {
+		t.Fatal("expected error when deducting frozen deposit")
+	}
+}
+
+func TestSupplementalEvidence(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Nikon",
+		Model:          "Z6",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:     eq.ID,
+		CustomerName:    "Grace",
+		CustomerPhone:   "777",
+		StudioPosition:  "J-1",
+		Deposit:         3000,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints:    []model.FaultPoint{{Location: "body", Description: "scratch", Severity: "severe"}},
+		ReturnPhotos:   []string{"damage.jpg"},
+	})
+	_ = dm
+
+	appeal, _ := svc.CreateAppeal(CreateAppealInput{
+		BorrowRecordID: br.ID,
+		CustomerName:   "Grace",
+		Reason:         "disagree",
+		Evidence:       []string{"cust_ev.jpg"},
+	})
+
+	se, err := svc.AddSupplementalEvidence(AddSupplementalEvidenceInput{
+		AppealID:       appeal.ID,
+		BorrowRecordID: br.ID,
+		OperatorName:   "Operator_01",
+		EvidenceType:   model.EvidenceSurveillance,
+		Description:    "监控录像显示客户使用期间有摔落",
+		Attachments:    []string{"surveillance_clip1.mp4", "surveillance_clip2.mp4"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error adding supplemental evidence: %v", err)
+	}
+	if se.EvidenceType != model.EvidenceSurveillance {
+		t.Fatalf("expected evidence_type surveillance, got %s", se.EvidenceType)
+	}
+	if len(se.Attachments) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(se.Attachments))
+	}
+	if se.OperatorName != "Operator_01" {
+		t.Fatalf("expected operator_name Operator_01, got %s", se.OperatorName)
+	}
+
+	se2, _ := svc.AddSupplementalEvidence(AddSupplementalEvidenceInput{
+		BorrowRecordID: br.ID,
+		OperatorName:   "Operator_02",
+		EvidenceType:   model.EvidenceHandoverPhoto,
+		Description:    "交接照片显示器材完好",
+		Attachments:    []string{"handover_1.jpg"},
+	})
+	if se2.AppealID != "" {
+		t.Fatalf("expected empty appeal_id, got %s", se2.AppealID)
+	}
+
+	allByAppeal := svc.ListSupplementalEvidences(appeal.ID, "")
+	if len(allByAppeal) != 1 {
+		t.Fatalf("expected 1 supplemental evidence by appeal, got %d", len(allByAppeal))
+	}
+
+	allByBorrow := svc.ListSupplementalEvidences("", br.ID)
+	if len(allByBorrow) != 2 {
+		t.Fatalf("expected 2 supplemental evidences by borrow, got %d", len(allByBorrow))
+	}
+}
+
+func TestUpdateRepairQuoteAndAdditionalCompensation(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryCamera,
+		Brand:          "Sony",
+		Model:          "A7S III",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:     eq.ID,
+		CustomerName:    "Henry",
+		CustomerPhone:   "888",
+		StudioPosition:  "K-1",
+		Deposit:         2000,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints:    []model.FaultPoint{{Location: "sensor", Description: "damaged", Severity: "severe"}},
+		ReturnPhotos:   []string{"damage.jpg"},
+	})
+
+	rq, _ := svc.CreateRepairQuote(CreateRepairQuoteInput{
+		DamageReportID: dm.ID,
+		RepairCost:     800,
+		LaborCost:      200,
+		Description:    "initial quote",
+	})
+
+	if rq.TotalCost != 1000 {
+		t.Fatalf("expected initial total_cost 1000, got %.2f", rq.TotalCost)
+	}
+
+	_, err := svc.DeductDeposit(DeductDepositInput{
+		BorrowRecordID: br.ID,
+		RepairQuoteID:  rq.ID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error deducting deposit: %v", err)
+	}
+
+	updatedRq, comp, err := svc.UpdateRepairQuote(UpdateRepairQuoteInput{
+		RepairQuoteID: rq.ID,
+		RepairCost:    2500,
+		LaborCost:     800,
+		Description:   "shop callback: sensor replacement + board repair",
+		UpdateNote:    "维修店回传最新报价，发现主板也需更换",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error updating repair quote: %v", err)
+	}
+
+	if updatedRq.TotalCost != 3300 {
+		t.Fatalf("expected updated total_cost 3300, got %.2f", updatedRq.TotalCost)
+	}
+	if !updatedRq.IsUpdated {
+		t.Fatal("expected is_updated to be true")
+	}
+	if updatedRq.UpdatedAt == nil {
+		t.Fatal("expected updated_at to be set")
+	}
+	if updatedRq.UpdateNote == "" {
+		t.Fatal("expected update_note to be set")
+	}
+
+	if comp == nil {
+		t.Fatal("expected additional compensation to be created")
+	}
+	if comp.AdditionalAmount != 1300 {
+		t.Fatalf("expected additional_amount 1300 (3300-2000), got %.2f", comp.AdditionalAmount)
+	}
+	if comp.DepositAmount != 2000 {
+		t.Fatalf("expected deposit_amount 2000, got %.2f", comp.DepositAmount)
+	}
+	if comp.Status != "pending" {
+		t.Fatalf("expected status pending, got %s", comp.Status)
+	}
+
+	comps := svc.ListAdditionalCompensations(br.ID)
+	if len(comps) != 1 {
+		t.Fatalf("expected 1 additional compensation by borrow, got %d", len(comps))
+	}
+
+	compCollected, err := svc.CollectAdditionalCompensation(CollectAdditionalCompensationInput{
+		CompensationID: comp.ID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error collecting compensation: %v", err)
+	}
+	if compCollected.Status != "collected" {
+		t.Fatalf("expected status collected, got %s", compCollected.Status)
+	}
+	if compCollected.CollectedAt == nil {
+		t.Fatal("expected collected_at to be set")
+	}
+
+	_, err = svc.CollectAdditionalCompensation(CollectAdditionalCompensationInput{
+		CompensationID: comp.ID,
+	})
+	if err == nil {
+		t.Fatal("expected error when collecting already collected compensation")
+	}
+}
+
+func TestRepairQuoteExceedsDepositCreatesAdditionalCompensation(t *testing.T) {
+	s := store.New()
+	svc := New(s)
+
+	eq, _ := svc.CreateEquipment(CreateEquipmentInput{
+		Category:       model.CategoryLens,
+		Brand:          "Sigma",
+		Model:          "35mm Art",
+		PreBorrowPhoto: "before.jpg",
+	})
+
+	br, _ := svc.BorrowEquipment(BorrowInput{
+		EquipmentID:     eq.ID,
+		CustomerName:    "Ivy",
+		CustomerPhone:   "999",
+		StudioPosition:  "L-1",
+		Deposit:         1500,
+		PreBorrowPhotos: []string{"before.jpg"},
+	})
+
+	svc.ReturnInspection(ReturnInspectionInput{
+		BorrowRecordID: br.ID,
+		ReturnPhotos:   []string{"return.jpg"},
+	})
+
+	dm, _ := svc.RegisterDamage(RegisterDamageInput{
+		BorrowRecordID: br.ID,
+		FaultPoints:    []model.FaultPoint{{Location: "mount", Description: "broken", Severity: "severe"}},
+		ReturnPhotos:   []string{"damage.jpg"},
+	})
+
+	rq, _ := svc.CreateRepairQuote(CreateRepairQuoteInput{
+		DamageReportID: dm.ID,
+		RepairCost:     1800,
+		LaborCost:      400,
+		Description:    "replace mount assembly",
+	})
+
+	if rq.TotalCost != 2200 {
+		t.Fatalf("expected total_cost 2200, got %.2f", rq.TotalCost)
+	}
+
+	deduction, err := svc.DeductDeposit(DeductDepositInput{
+		BorrowRecordID: br.ID,
+		RepairQuoteID:  rq.ID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error deducting deposit: %v", err)
+	}
+
+	if deduction.DeductAmount != 1500 {
+		t.Fatalf("expected deduct_amount 1500 (full deposit), got %.2f", deduction.DeductAmount)
+	}
+	if deduction.RefundAmount != 0 {
+		t.Fatalf("expected refund_amount 0, got %.2f", deduction.RefundAmount)
+	}
+
+	comp := svc.store.FindAdditionalCompensationByRepairQuote(rq.ID)
+	if comp == nil {
+		t.Fatal("expected additional compensation record to be created automatically")
+	}
+	if comp.AdditionalAmount != 700 {
+		t.Fatalf("expected additional_amount 700 (2200-1500), got %.2f", comp.AdditionalAmount)
+	}
+	if comp.OriginalDeduct != 1500 {
+		t.Fatalf("expected original_deduct 1500, got %.2f", comp.OriginalDeduct)
+	}
+	if comp.Status != "pending" {
+		t.Fatalf("expected status pending, got %s", comp.Status)
+	}
+}

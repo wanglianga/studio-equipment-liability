@@ -36,10 +36,11 @@ type Equipment struct {
 type BorrowStatus string
 
 const (
-	BorrowActive   BorrowStatus = "active"
-	BorrowReturned BorrowStatus = "returned"
-	BorrowAppealed BorrowStatus = "appealed"
-	BorrowClosed   BorrowStatus = "closed"
+	BorrowActive       BorrowStatus = "active"
+	BorrowReturned     BorrowStatus = "returned"
+	BorrowAppealed     BorrowStatus = "appealed"
+	BorrowDepositFrozen BorrowStatus = "deposit_frozen"
+	BorrowClosed       BorrowStatus = "closed"
 )
 
 type PreConditionItem struct {
@@ -63,6 +64,9 @@ type BorrowRecord struct {
 	ReturnTime         *time.Time        `json:"return_time,omitempty"`
 	ReturnPhotos       []string          `json:"return_photos,omitempty"`
 	Status             BorrowStatus      `json:"status"`
+	DepositFrozen      bool              `json:"deposit_frozen"`
+	DepositFrozenAt    *time.Time        `json:"deposit_frozen_at,omitempty"`
+	DepositFrozenReason string           `json:"deposit_frozen_reason,omitempty"`
 	CreatedAt          time.Time         `json:"created_at"`
 }
 
@@ -92,16 +96,6 @@ type FaultPoint struct {
 	Location    string `json:"location"`
 	Description string `json:"description"`
 	Severity    string `json:"severity"`
-}
-
-type RepairQuote struct {
-	ID             string    `json:"id"`
-	DamageReportID string    `json:"damage_report_id"`
-	RepairCost     float64   `json:"repair_cost"`
-	LaborCost      float64   `json:"labor_cost"`
-	TotalCost      float64   `json:"total_cost"`
-	Description    string    `json:"description"`
-	CreatedAt      time.Time `json:"created_at"`
 }
 
 type AccessoryPrice struct {
@@ -145,4 +139,53 @@ type Appeal struct {
 	ReviewNote     string       `json:"review_note,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
 	ReviewedAt     *time.Time   `json:"reviewed_at,omitempty"`
+}
+
+type EvidenceType string
+
+const (
+	EvidenceSurveillance  EvidenceType = "surveillance"
+	EvidenceHandoverPhoto EvidenceType = "handover_photo"
+	EvidencePreCheck      EvidenceType = "pre_check_record"
+	EvidencePostCheck     EvidenceType = "post_check_record"
+	EvidenceOther         EvidenceType = "other"
+)
+
+type SupplementalEvidence struct {
+	ID             string       `json:"id"`
+	AppealID       string       `json:"appeal_id"`
+	BorrowRecordID string       `json:"borrow_record_id"`
+	OperatorName   string       `json:"operator_name"`
+	EvidenceType   EvidenceType `json:"evidence_type"`
+	Description    string       `json:"description"`
+	Attachments    []string     `json:"attachments"`
+	CreatedAt      time.Time    `json:"created_at"`
+}
+
+type RepairQuote struct {
+	ID             string     `json:"id"`
+	DamageReportID string     `json:"damage_report_id"`
+	RepairCost     float64    `json:"repair_cost"`
+	LaborCost      float64    `json:"labor_cost"`
+	TotalCost      float64    `json:"total_cost"`
+	Description    string     `json:"description"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	IsUpdated      bool       `json:"is_updated"`
+	UpdateNote     string     `json:"update_note,omitempty"`
+}
+
+type AdditionalCompensation struct {
+	ID                string     `json:"id"`
+	BorrowRecordID    string     `json:"borrow_record_id"`
+	RepairQuoteID     string     `json:"repair_quote_id"`
+	OriginalDeduct    float64    `json:"original_deduct"`
+	OriginalRefund    float64    `json:"original_refund"`
+	NewTotalCost      float64    `json:"new_total_cost"`
+	DepositAmount     float64    `json:"deposit_amount"`
+	AdditionalAmount  float64    `json:"additional_amount"`
+	Status            string     `json:"status"`
+	Note              string     `json:"note"`
+	CreatedAt         time.Time  `json:"created_at"`
+	CollectedAt       *time.Time `json:"collected_at,omitempty"`
 }

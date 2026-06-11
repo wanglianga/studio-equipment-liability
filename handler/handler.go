@@ -342,6 +342,100 @@ func (h *Handler) DeductAccessory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, deduction)
 }
 
+func (h *Handler) AddSupplementalEvidence(w http.ResponseWriter, r *http.Request) {
+	var input service.AddSupplementalEvidenceInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if input.BorrowRecordID == "" {
+		writeError(w, http.StatusBadRequest, "borrow_record_id is required")
+		return
+	}
+	if input.OperatorName == "" {
+		writeError(w, http.StatusBadRequest, "operator_name is required")
+		return
+	}
+	if input.EvidenceType == "" {
+		writeError(w, http.StatusBadRequest, "evidence_type is required")
+		return
+	}
+	if len(input.Attachments) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one attachment is required")
+		return
+	}
+
+	evidence, err := h.svc.AddSupplementalEvidence(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, evidence)
+}
+
+func (h *Handler) UpdateRepairQuote(w http.ResponseWriter, r *http.Request) {
+	var input service.UpdateRepairQuoteInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if input.RepairQuoteID == "" {
+		writeError(w, http.StatusBadRequest, "repair_quote_id is required")
+		return
+	}
+	if input.RepairCost < 0 || input.LaborCost < 0 {
+		writeError(w, http.StatusBadRequest, "repair_cost and labor_cost must not be negative")
+		return
+	}
+
+	quote, additionalComp, err := h.svc.UpdateRepairQuote(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result := map[string]interface{}{
+		"repair_quote": quote,
+	}
+	if additionalComp != nil {
+		result["additional_compensation"] = additionalComp
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) ListSupplementalEvidences(w http.ResponseWriter, r *http.Request) {
+	appealID := r.URL.Query().Get("appeal_id")
+	borrowID := r.URL.Query().Get("borrow_record_id")
+	evidences := h.svc.ListSupplementalEvidences(appealID, borrowID)
+	writeJSON(w, http.StatusOK, evidences)
+}
+
+func (h *Handler) ListAdditionalCompensations(w http.ResponseWriter, r *http.Request) {
+	borrowID := r.URL.Query().Get("borrow_record_id")
+	comps := h.svc.ListAdditionalCompensations(borrowID)
+	writeJSON(w, http.StatusOK, comps)
+}
+
+func (h *Handler) CollectAdditionalCompensation(w http.ResponseWriter, r *http.Request) {
+	var input service.CollectAdditionalCompensationInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if input.CompensationID == "" {
+		writeError(w, http.StatusBadRequest, "compensation_id is required")
+		return
+	}
+
+	comp, err := h.svc.CollectAdditionalCompensation(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, comp)
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/equipments", h.CreateEquipment)
 	mux.HandleFunc("GET /api/equipments", h.ListEquipments)
@@ -354,6 +448,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/damage", h.ListDamageReports)
 	mux.HandleFunc("GET /api/damage/{id}", h.GetDamageReport)
 	mux.HandleFunc("POST /api/repair-quote", h.CreateRepairQuote)
+	mux.HandleFunc("PUT /api/repair-quote", h.UpdateRepairQuote)
 	mux.HandleFunc("POST /api/repair-complete/{id}", h.CompleteRepair)
 	mux.HandleFunc("POST /api/deduction", h.DeductDeposit)
 	mux.HandleFunc("POST /api/deduction/accessory", h.DeductAccessory)
@@ -362,6 +457,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/appeal", h.ListAppeals)
 	mux.HandleFunc("POST /api/accessory-prices", h.AddAccessoryPrice)
 	mux.HandleFunc("GET /api/accessory-prices", h.ListAccessoryPrices)
+	mux.HandleFunc("POST /api/supplemental-evidence", h.AddSupplementalEvidence)
+	mux.HandleFunc("GET /api/supplemental-evidence", h.ListSupplementalEvidences)
+	mux.HandleFunc("GET /api/additional-compensation", h.ListAdditionalCompensations)
+	mux.HandleFunc("POST /api/additional-compensation/collect", h.CollectAdditionalCompensation)
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {

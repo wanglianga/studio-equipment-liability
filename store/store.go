@@ -9,32 +9,38 @@ import (
 )
 
 type Store struct {
-	mu               sync.RWMutex
-	equipments       map[string]*model.Equipment
-	borrowRecords    map[string]*model.BorrowRecord
-	damageReports    map[string]*model.DamageReport
-	repairQuotes     map[string]*model.RepairQuote
-	deductionRecords map[string]*model.DeductionRecord
-	appeals          map[string]*model.Appeal
-	accessoryPrices  map[string]*model.AccessoryPrice
-	equipCounter     int
-	borrowCounter    int
-	damageCounter    int
-	repairCounter    int
-	deductCounter    int
-	appealCounter    int
-	accessoryCounter int
+	mu                      sync.RWMutex
+	equipments              map[string]*model.Equipment
+	borrowRecords           map[string]*model.BorrowRecord
+	damageReports           map[string]*model.DamageReport
+	repairQuotes            map[string]*model.RepairQuote
+	deductionRecords        map[string]*model.DeductionRecord
+	appeals                 map[string]*model.Appeal
+	accessoryPrices         map[string]*model.AccessoryPrice
+	supplementalEvidences   map[string]*model.SupplementalEvidence
+	additionalCompensations map[string]*model.AdditionalCompensation
+	equipCounter            int
+	borrowCounter           int
+	damageCounter           int
+	repairCounter           int
+	deductCounter           int
+	appealCounter           int
+	accessoryCounter        int
+	supplementalCounter     int
+	additionalCompCounter   int
 }
 
 func New() *Store {
 	return &Store{
-		equipments:       make(map[string]*model.Equipment),
-		borrowRecords:    make(map[string]*model.BorrowRecord),
-		damageReports:    make(map[string]*model.DamageReport),
-		repairQuotes:     make(map[string]*model.RepairQuote),
-		deductionRecords: make(map[string]*model.DeductionRecord),
-		appeals:          make(map[string]*model.Appeal),
-		accessoryPrices:  make(map[string]*model.AccessoryPrice),
+		equipments:              make(map[string]*model.Equipment),
+		borrowRecords:           make(map[string]*model.BorrowRecord),
+		damageReports:           make(map[string]*model.DamageReport),
+		repairQuotes:            make(map[string]*model.RepairQuote),
+		deductionRecords:        make(map[string]*model.DeductionRecord),
+		appeals:                 make(map[string]*model.Appeal),
+		accessoryPrices:         make(map[string]*model.AccessoryPrice),
+		supplementalEvidences:   make(map[string]*model.SupplementalEvidence),
+		additionalCompensations: make(map[string]*model.AdditionalCompensation),
 	}
 }
 
@@ -337,5 +343,118 @@ func (s *Store) NextAccessoryID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.accessoryCounter++
-	return fmt.Sprintf("AP-%04d", s.accessoryCounter)
+	return fmt.Sprintf("AC-%04d", s.accessoryCounter)
+}
+
+func (s *Store) SaveSupplementalEvidence(se *model.SupplementalEvidence) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.supplementalEvidences[se.ID] = se
+}
+
+func (s *Store) GetSupplementalEvidence(id string) (*model.SupplementalEvidence, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	se, ok := s.supplementalEvidences[id]
+	return se, ok
+}
+
+func (s *Store) ListSupplementalEvidences() []*model.SupplementalEvidence {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.SupplementalEvidence, 0, len(s.supplementalEvidences))
+	for _, se := range s.supplementalEvidences {
+		result = append(result, se)
+	}
+	return result
+}
+
+func (s *Store) FindSupplementalEvidenceByAppeal(appealID string) []*model.SupplementalEvidence {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.SupplementalEvidence, 0)
+	for _, se := range s.supplementalEvidences {
+		if se.AppealID == appealID {
+			result = append(result, se)
+		}
+	}
+	return result
+}
+
+func (s *Store) FindSupplementalEvidenceByBorrow(borrowID string) []*model.SupplementalEvidence {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.SupplementalEvidence, 0)
+	for _, se := range s.supplementalEvidences {
+		if se.BorrowRecordID == borrowID {
+			result = append(result, se)
+		}
+	}
+	return result
+}
+
+func (s *Store) NextSupplementalEvidenceID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.supplementalCounter++
+	return fmt.Sprintf("SE-%04d", s.supplementalCounter)
+}
+
+func (s *Store) SaveAdditionalCompensation(ac *model.AdditionalCompensation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.additionalCompensations[ac.ID] = ac
+}
+
+func (s *Store) GetAdditionalCompensation(id string) (*model.AdditionalCompensation, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ac, ok := s.additionalCompensations[id]
+	return ac, ok
+}
+
+func (s *Store) ListAdditionalCompensations() []*model.AdditionalCompensation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.AdditionalCompensation, 0, len(s.additionalCompensations))
+	for _, ac := range s.additionalCompensations {
+		result = append(result, ac)
+	}
+	return result
+}
+
+func (s *Store) FindAdditionalCompensationByBorrow(borrowID string) []*model.AdditionalCompensation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*model.AdditionalCompensation, 0)
+	for _, ac := range s.additionalCompensations {
+		if ac.BorrowRecordID == borrowID {
+			result = append(result, ac)
+		}
+	}
+	return result
+}
+
+func (s *Store) FindAdditionalCompensationByRepairQuote(repairQuoteID string) *model.AdditionalCompensation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ac := range s.additionalCompensations {
+		if ac.RepairQuoteID == repairQuoteID {
+			return ac
+		}
+	}
+	return nil
+}
+
+func (s *Store) NextAdditionalCompensationID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.additionalCompCounter++
+	return fmt.Sprintf("XC-%04d", s.additionalCompCounter)
+}
+
+func (s *Store) UpdateRepairQuote(q *model.RepairQuote) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repairQuotes[q.ID] = q
 }
